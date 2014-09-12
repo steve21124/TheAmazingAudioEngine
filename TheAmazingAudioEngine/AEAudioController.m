@@ -717,9 +717,9 @@ static OSStatus topRenderNotifyCallback(void *inRefCon, AudioUnitRenderActionFla
     
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationWillEnterForeground:) name:UIApplicationWillEnterForegroundNotification object:nil];
     
-    if ( ABConnectionsChangedNotification ) {
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audiobusConnectionsChanged:) name:ABConnectionsChangedNotification object:nil];
-    }
+//    if ( ABConnectionsChangedNotification ) {
+//        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audiobusConnectionsChanged:) name:ABConnectionsChangedNotification object:nil];
+//    }
     
     TPCircularBufferInit(&_realtimeThreadMessageBuffer, kMessageBufferLength);
     TPCircularBufferInit(&_mainThreadMessageBuffer, kMessageBufferLength);
@@ -779,6 +779,9 @@ static OSStatus topRenderNotifyCallback(void *inRefCon, AudioUnitRenderActionFla
     OSStatus status;
     
     NSLog(@"TAAE: Starting Engine");
+//    NSArray *syms = [NSThread  callStackSymbols]; 
+//    for(id sym in syms)
+//        NSLog(@"  %@", sym);
     
     if ( !_audioGraph ) {
         if ( error ) *error = _lastError;
@@ -2016,14 +2019,14 @@ NSTimeInterval AEAudioControllerOutputLatency(__unsafe_unretained AEAudioControl
     if ( _hasSystemError ) [self attemptRecoveryFromSystemError:NULL];
 }
 
--(void)audiobusConnectionsChanged:(NSNotification*)notification {
-    if ( _inputEnabled ) {
-        [self updateInputDeviceStatus];
-    }
-    if ( [notification.object connected] ) {
-        [self start:NULL];
-    }
-}
+//-(void)audiobusConnectionsChanged:(NSNotification*)notification {
+//    if ( _inputEnabled ) {
+//        [self updateInputDeviceStatus];
+//    }
+//    if ( [notification.object connected] ) {
+//        [self start:NULL];
+//    }
+//}
 
 // iOS 5 compatibility
 
@@ -2473,8 +2476,27 @@ static void audioSessionPropertyListener(void *inClientData, AudioSessionPropert
     }
 }
 
+- (void)syncRunningState {
+    UInt32 r = 0, size = sizeof(r);
+    AudioUnitGetProperty(_ioAudioUnit, kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global, 0, &r, &size);
+    if(r != _running) {
+        NSLog(@"TAAE: IsRunning changed to %d, was %d",(int)r,(int)_running);
+        if(_running)
+            [self stop];
+        else
+            [self start:NULL];
+    }
+}
+
+// Problem with this is that it fires also when we "manually" start/stop.. so the methods should be split, and the public start/stop should only start/stop the graph, which then triggers the property listener, which updates the other stuff (_running, polling thread, etc..)
+//static void IsRunningCallback(void *inRefCon, AudioUnit inUnit, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement) {
+//    AEAudioController *THIS = (__bridge AEAudioController*)inRefCon;
+//    [THIS syncRunningState];
+//}
+
 static void IsInterAppConnectedCallback(void *inRefCon, AudioUnit inUnit, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement) {
     AEAudioController *THIS = (__bridge AEAudioController*)inRefCon;
+    [THIS syncRunningState];
     if ( THIS->_inputEnabled ) {
         [THIS updateInputDeviceStatus];
     }
@@ -2532,6 +2554,10 @@ static void IsInterAppConnectedCallback(void *inRefCon, AudioUnit inUnit, AudioU
 
     checkResult(AudioUnitAddPropertyListener(_ioAudioUnit, kAudioUnitProperty_IsInterAppConnected, IsInterAppConnectedCallback, (__bridge void*)self),
                 "AudioUnitAddPropertyListener(kAudioUnitProperty_IsInterAppConnected)");
+//    checkResult(AudioUnitAddPropertyListener(_ioAudioUnit, kAudioOutputUnitProperty_IsRunning, IsRunningCallback, (__bridge void*)self),
+//                "AudioUnitAddPropertyListener(kAudioOutputUnitProperty_IsRunning)");
+    
+    
 }
 
 - (void)teardown {
@@ -2890,7 +2916,7 @@ static void IsInterAppConnectedCallback(void *inRefCon, AudioUnit inUnit, AudioU
         _usingAudiobusInput       = usingAudiobus;
         _inputLevelMonitorData    = inputLevelMonitorData;
     }];
-    
+
     if ( inputAvailable && (!_audiobusReceiverPort || !ABReceiverPortIsConnected(_audiobusReceiverPort)) ) {
         AudioStreamBasicDescription currentAudioDescription;
         UInt32 size = sizeof(currentAudioDescription);
@@ -2945,7 +2971,7 @@ static void IsInterAppConnectedCallback(void *inRefCon, AudioUnit inUnit, AudioU
         if ( inputAvailable ) {
             NSLog(@"TAAE: Input status updated (%u channel, %@%@%@%@)",
                   (unsigned int)numberOfInputChannels,
-                  usingAudiobus ? @"using Audiobus, " : @"",
+                  usingAudiobus ? @"using Audiobus, " : usingIAA ? @"using IAA, " : @"",
                   rawAudioDescription.mFormatFlags & kAudioFormatFlagIsNonInterleaved ? @"non-interleaved" : @"interleaved",
                   [self usingVPIO] ? @", using voice processing" : @"",
                   inputCallbacks[0].audioConverter ? @", with converter" : @"");
