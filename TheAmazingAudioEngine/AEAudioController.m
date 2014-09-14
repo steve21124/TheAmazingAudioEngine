@@ -816,8 +816,12 @@ static OSStatus topRenderNotifyCallback(void *inRefCon, AudioUnitRenderActionFla
         [_pollThread start];
     }
     
+    @synchronized ( self ) {
+        status = AUGraphStart(_audioGraph);
+    }
+    
     // Start things up
-    if ( !checkResult(status=AUGraphStart(_audioGraph), "AUGraphStart") ) {
+    if ( !checkResult(status, "AUGraphStart") ) {
         if ( !recoverFromErrors || ![self attemptRecoveryFromSystemError:error] ) {
             NSError *startError = [NSError audioControllerErrorWithMessage:@"Couldn't start audio engine" OSStatus:status];
             if ( error && !*error ) *error = startError;
@@ -827,8 +831,10 @@ static OSStatus topRenderNotifyCallback(void *inRefCon, AudioUnitRenderActionFla
     }
     
     if ( !self.running ) {
-        // Ensure top IO unit is running (AUGraphStart may fail to start it)
-        checkResult(AudioOutputUnitStart(_ioAudioUnit), "AudioOutputUnitStart");
+        @synchronized ( self ) {
+            // Ensure top IO unit is running (AUGraphStart may fail to start it)
+            checkResult(AudioOutputUnitStart(_ioAudioUnit), "AudioOutputUnitStart");
+        }
     }
     
     if ( _inputEnabled ) {
@@ -1519,14 +1525,16 @@ static void processPendingMessagesOnRealtimeThread(__unsafe_unretained AEAudioCo
     
     // Wait for response
     uint64_t giveUpTime = mach_absolute_time() + (1.0 * __secondsToHostTicks);
-    while ( !finished && mach_absolute_time() < giveUpTime ) {
+    while ( !finished && mach_absolute_time() < giveUpTime && self.running ) {
         [self pollForMessageResponses];
         if ( finished ) break;
         [NSThread sleepForTimeInterval:_preferredBufferDuration ? _preferredBufferDuration : 0.01];
     }
     
     if ( !finished ) {
-        NSLog(@"TAAE: Timed out while performing message exchange");
+        if ( self.running ) {
+            NSLog(@"TAAE: Timed out while performing message exchange");
+        }
         @synchronized ( self ) {
             processPendingMessagesOnRealtimeThread(self);
             [self pollForMessageResponses];
@@ -2319,7 +2327,9 @@ static void interAppConnectedChangeCallback(void *inRefCon, AudioUnit inUnit, Au
     checkResult([self updateGraph], "Update graph");
     
     if ( wasRunning ) {
-        checkResult(AUGraphStart(_audioGraph), "AUGraphStart");
+        @synchronized ( self ) {
+            checkResult(AUGraphStart(_audioGraph), "AUGraphStart");
+        }
     }
 }
 
