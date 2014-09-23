@@ -665,20 +665,6 @@ static OSStatus topRenderNotifyCallback(void *inRefCon, AudioUnitRenderActionFla
     return audioDescription;
 }
 
-+ (AudioStreamBasicDescription)audioUnitCanonicalAudioDescription {
-    AudioStreamBasicDescription audioDescription;
-    memset(&audioDescription, 0, sizeof(audioDescription));
-    audioDescription.mFormatID          = kAudioFormatLinearPCM;
-    audioDescription.mFormatFlags       = kAudioFormatFlagsAudioUnitCanonical;
-    audioDescription.mChannelsPerFrame  = 2;
-    audioDescription.mBytesPerPacket    = sizeof(AudioUnitSampleType);
-    audioDescription.mFramesPerPacket   = 1;
-    audioDescription.mBytesPerFrame     = sizeof(AudioUnitSampleType);
-    audioDescription.mBitsPerChannel    = 8 * sizeof(AudioUnitSampleType);
-    audioDescription.mSampleRate        = 44100.0;
-    return audioDescription;
-}
-
 + (BOOL)voiceProcessingAvailable {
     // Determine platform name
     static NSString *platform = nil;
@@ -2046,6 +2032,15 @@ NSTimeInterval AEAudioControllerOutputLatency(__unsafe_unretained AEAudioControl
             _interrupted = YES;
             
             [self stopInternal];
+
+            UInt32 iaaConnected;
+            UInt32 size = sizeof(iaaConnected);
+            AudioUnitGetProperty(_ioAudioUnit, kAudioUnitProperty_IsInterAppConnected, kAudioUnitScope_Global, 0, &iaaConnected, &size);
+            if ( iaaConnected ) {
+                NSLog(@"TAAE: Audio session interrupted while connected to IAA, restarting");
+                [self start:NULL];
+                return;
+            }
             
             [[NSNotificationCenter defaultCenter] postNotificationName:AEAudioControllerSessionInterruptionBeganNotification object:self];
             
@@ -2812,16 +2807,13 @@ static void interAppConnectedChangeCallback(void *inRefCon, AudioUnit inUnit, Au
         }
         
         if ( channel->type == kChannelTypeChannel ) {
-            // Setup render callback struct, if necessary
+            // Setup render callback struct
             AURenderCallbackStruct rcbs = { .inputProc = &renderCallback, .inputProcRefCon = channel };
-            if ( 1 /* workaround for graph bug: http://wiki.theamazingaudioengine.com/graph-node-input-callback-bug */
-                    || !hasUpstreamInteraction || upstreamInteraction.nodeInteractionType != kAUNodeInteraction_InputCallback || memcmp(&upstreamInteraction.nodeInteraction.inputCallback.cback, &rcbs, sizeof(rcbs)) != 0 ) {
-                if ( hasUpstreamInteraction ) {
-                    checkResult(AUGraphDisconnectNodeInput(_audioGraph, targetNode, targetBus), "AUGraphDisconnectNodeInput");
-                }
-                checkResult(AUGraphSetNodeInputCallback(_audioGraph, targetNode, targetBus, &rcbs), "AUGraphSetNodeInputCallback");
-                upstreamInteraction.nodeInteractionType = kAUNodeInteraction_InputCallback;
+            if ( hasUpstreamInteraction ) {
+                checkResult(AUGraphDisconnectNodeInput(_audioGraph, targetNode, targetBus), "AUGraphDisconnectNodeInput");
             }
+            checkResult(AUGraphSetNodeInputCallback(_audioGraph, targetNode, targetBus, &rcbs), "AUGraphSetNodeInputCallback");
+            upstreamInteraction.nodeInteractionType = kAUNodeInteraction_InputCallback;
             
         } else if ( channel->type == kChannelTypeGroup ) {
             AEChannelGroupRef subgroup = (AEChannelGroupRef)channel->ptr;
